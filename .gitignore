@@ -1,0 +1,12 @@
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local tooling (not part of the website)
+.claude/
+node_modules/
+
+# Never commit secrets
+.env
+.env.*
