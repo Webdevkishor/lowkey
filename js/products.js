@@ -36,7 +36,7 @@ export const CONFIG = {
   // Optional: your live website address, e.g. "https://lowkey-menswear.netlify.app/".
   // Used for the product link inside WhatsApp messages.
   // Leave empty to use whatever address the page was opened from.
-  siteUrl: "",
+  siteUrl: "https://webdevkishor.github.io/lowkey/",
 };
 
 /* ------------------------------------------------------------------ */
