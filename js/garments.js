@@ -562,10 +562,101 @@ function buildJeansGeometry(product, segU, segV) {
   return { geo, layout: { foldStart: 1 - (Lf + arc) / L, foldEnd: 1 - Lf / L } };
 }
 
-function buildPhotoGeometry(aspect, segs) {
-  const w = 0.6;
-  const h = w * aspect;
-  const geo = new THREE.PlaneGeometry(w, h, segs, Math.round(segs * aspect));
+/* ------------------------------------------------------------------ */
+/* Product photos (JPG, or cut-out PNG / WebP with a see-through background) */
+/* ------------------------------------------------------------------ */
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Could not load photo ${url}`));
+    img.src = url;
+  });
+}
+
+/**
+ * Prepare a product photo for the rail. Trims see-through margins (so a cut-out
+ * hangs right under the hanger), caps its size for phones, and returns a mask
+ * (white = garment) plus the garment's average colour for its plain back.
+ */
+async function loadPhoto(url, renderer, maxPx) {
+  const img = await loadImage(url);
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  if (!iw || !ih) throw new Error(`Empty photo ${url}`);
+
+  // 1. find the garment's bounds and average colour on a small copy
+  const sw = Math.min(256, iw);
+  const sh = Math.max(1, Math.round((sw * ih) / iw));
+  const small = makeCanvas(sw, sh);
+  const sctx = small.getContext("2d", { willReadFrequently: true });
+  sctx.drawImage(img, 0, 0, sw, sh);
+  const px = sctx.getImageData(0, 0, sw, sh).data;
+  let minX = sw;
+  let minY = sh;
+  let maxX = -1;
+  let maxY = -1;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < sw; x++) {
+      const i = (y * sw + x) * 4;
+      if (px[i + 3] < 128) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      r += px[i];
+      g += px[i + 1];
+      b += px[i + 2];
+      n++;
+    }
+  }
+  if (!n) throw new Error(`Photo is completely see-through: ${url}`);
+
+  // 2. crop to the garment (small margin) at full resolution, capped at maxPx
+  const pad = 2;
+  const cx = Math.max(0, ((minX - pad) / sw) * iw);
+  const cy = Math.max(0, ((minY - pad) / sh) * ih);
+  const cw = Math.min(iw, ((maxX + 1 + pad) / sw) * iw) - cx;
+  const ch = Math.min(ih, ((maxY + 1 + pad) / sh) * ih) - cy;
+  const k = Math.min(1, maxPx / Math.max(cw, ch));
+  const c = makeCanvas(Math.max(1, Math.round(cw * k)), Math.max(1, Math.round(ch * k)));
+  c.getContext("2d").drawImage(img, cx, cy, cw, ch, 0, 0, c.width, c.height);
+
+  // 3. mask from the photo's transparency (an ordinary JPG gives an all-white mask)
+  const m = makeCanvas(c.width, c.height);
+  const mctx = m.getContext("2d");
+  mctx.drawImage(c, 0, 0);
+  mctx.globalCompositeOperation = "source-in";
+  mctx.fillStyle = "#fff";
+  mctx.fillRect(0, 0, m.width, m.height);
+  mctx.globalCompositeOperation = "destination-over";
+  mctx.fillStyle = "#000";
+  mctx.fillRect(0, 0, m.width, m.height);
+
+  const avg = new THREE.Color().setRGB(r / n / 255, g / n / 255, b / n / 255, THREE.SRGBColorSpace);
+  return { map: canvasTexture(c, renderer), mask: canvasTexture(m, renderer, false), aspect: c.height / c.width, avg };
+}
+
+/** Real-world size for a photo: about 0.7 m wide for tops (like the drawn shirts), capped in height. */
+function photoSize(product, aspect) {
+  const jeans = /jeans/.test(product.garmentType || "");
+  const maxH = jeans ? 1.0 : 0.85;
+  let w = jeans ? 0.42 : 0.7;
+  let h = w * aspect;
+  if (h > maxH) {
+    h = maxH;
+    w = h / aspect;
+  }
+  return { w, h };
+}
+
+function buildPhotoGeometry(w, h, segs) {
+  const geo = new THREE.PlaneGeometry(w, h, segs, Math.max(2, Math.round((segs * h) / w)));
   geo.translate(0, -h / 2, 0);
   const p = geo.attributes.position;
   for (let i = 0; i < p.count; i++) {
@@ -573,7 +664,7 @@ function buildPhotoGeometry(aspect, segs) {
     p.setZ(i, 0.02 * Math.cos(Math.min(1, Math.abs(x)) * Math.PI * 0.5));
   }
   geo.computeVertexNormals();
-  return { geo, h };
+  return geo;
 }
 
 /* ------------------------------------------------------------------ */
@@ -595,19 +686,28 @@ export async function createGarment(product, color, { renderer, envMap, quality 
   // 1. A real photo, if the owner added one
   if (product.image) {
     try {
-      const tex = await new THREE.TextureLoader().loadAsync(product.image);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
-      const aspect = tex.image.height / tex.image.width;
-      const { geo, h } = buildPhotoGeometry(aspect, quality.mobile ? 16 : 24);
-      const mat = clothMaterial({ map: tex, roughness: 0.8, top: 0, len: h, side: THREE.DoubleSide });
+      const photo = await loadPhoto(product.image, renderer, quality.mobile ? 768 : 1024);
+      const { w, h } = photoSize(product, photo.aspect);
+      const geo = buildPhotoGeometry(w, h, quality.mobile ? 16 : 24);
+      // front: the photo, with see-through parts cut away
+      const mat = clothMaterial({ map: photo.map, alphaMap: photo.mask, roughness: 0.8, top: 0, len: h, msaa: quality.msaa });
+      mat.shadowSide = THREE.DoubleSide;
+      // back: same outline in the garment's own colour (not the photo mirrored)
+      const backMat = clothMaterial({ map: null, alphaMap: photo.mask, roughness: 0.9, top: 0, len: h, side: THREE.BackSide, msaa: quality.msaa });
+      backMat.color.copy(photo.avg).multiplyScalar(0.85);
+      backMat.userData.u.uPhase = mat.userData.u.uPhase;
+      const depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, alphaMap: photo.mask, alphaTest: 0.5 });
       mesh = new THREE.Mesh(geo, mat);
+      mesh.customDepthMaterial = depthMat;
       mesh.position.y = -0.01;
-      materials.push(mat);
-      disposables.push(geo, mat, tex);
+      mesh.add(new THREE.Mesh(geo, backMat));
+      materials.push(mat, backMat);
+      disposables.push(geo, mat, backMat, depthMat, photo.map, photo.mask);
       height = h;
-      root.add(createHanger(0.17, envMap));
-    } catch {
+      const jeans = /jeans/.test(product.garmentType || "");
+      root.add(createHanger(jeans ? 0.2 : Math.min(0.2, w * 0.3), envMap));
+    } catch (err) {
+      console.warn(`[LOWKEY] Photo for "${product.name}" could not be used, showing the drawing instead.`, err?.message || err);
       mesh = null; // fall through to the procedural garment
     }
   }

@@ -48,9 +48,83 @@ export function applyConfig(config = CONFIG) {
 /* ------------------------------------------------------------------ */
 /* Product media: real photo when set, otherwise the generated flat     */
 /* ------------------------------------------------------------------ */
+/* Cut-out photos (PNG / WebP with a see-through background) usually keep big
+   empty margins. Trim them so the garment fills its card, as on the 3D rail.
+   Ordinary JPG photos are left exactly as they are. */
+const trimJobs = new Map(); // original src -> Promise<trimmed blob URL | null>
+const trimmedSrc = new Map(); // original src -> trimmed blob URL (once ready)
+
+function trimPhoto(src, img) {
+  if (!trimJobs.has(src)) {
+    const job = (async () => {
+      if (/\.jpe?g(\?|$)/i.test(src)) return null;
+      const iw = img.naturalWidth;
+      const ih = img.naturalHeight;
+      if (!iw || !ih) return null;
+      const sw = Math.min(256, iw);
+      const sh = Math.max(1, Math.round((sw * ih) / iw));
+      const probe = document.createElement("canvas");
+      probe.width = sw;
+      probe.height = sh;
+      const pctx = probe.getContext("2d", { willReadFrequently: true });
+      pctx.drawImage(img, 0, 0, sw, sh);
+      const d = pctx.getImageData(0, 0, sw, sh).data;
+      let minX = sw;
+      let minY = sh;
+      let maxX = -1;
+      let maxY = -1;
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          if (d[(y * sw + x) * 4 + 3] < 16) continue;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+      if (maxX < 0) return null;
+      const cx = Math.max(0, ((minX - 2) / sw) * iw);
+      const cy = Math.max(0, ((minY - 2) / sh) * ih);
+      const cw = Math.min(iw, ((maxX + 3) / sw) * iw) - cx;
+      const ch = Math.min(ih, ((maxY + 3) / sh) * ih) - cy;
+      if (cw > iw * 0.96 && ch > ih * 0.96) return null; // nothing worth trimming
+      const k = Math.min(1, 1400 / Math.max(cw, ch));
+      const out = document.createElement("canvas");
+      out.width = Math.max(1, Math.round(cw * k));
+      out.height = Math.max(1, Math.round(ch * k));
+      out.getContext("2d").drawImage(img, cx, cy, cw, ch, 0, 0, out.width, out.height);
+      const blob = await new Promise((resolve) => out.toBlob(resolve, "image/png"));
+      if (!blob) return null;
+      const url = URL.createObjectURL(blob);
+      trimmedSrc.set(src, url);
+      return url;
+    })().catch(() => null);
+    trimJobs.set(src, job);
+  }
+  return trimJobs.get(src);
+}
+
+/** Trim each product photo once it has loaded (Index, drawer, Shop the Look, 2D rail). */
+export function initPhotoTrim() {
+  document.addEventListener(
+    "load",
+    (e) => {
+      const img = e.target;
+      if (!(img instanceof HTMLImageElement) || !img.dataset.fallback || img.dataset.trimmed) return;
+      img.dataset.trimmed = "1";
+      trimPhoto(img.getAttribute("src"), img).then((url) => {
+        if (url && img.isConnected) img.src = url;
+      });
+    },
+    true
+  );
+}
+
 function media(p, color, { decorative = true, annotate = false, align } = {}) {
   if (p.image) {
-    return `<img src="${esc(p.image)}" alt="${decorative ? "" : esc(`${p.name} in ${color.name}`)}" loading="lazy" decoding="async" data-fallback="${esc(p.id)}" data-color="${esc(color.name)}">`;
+    const ready = trimmedSrc.get(p.image);
+    const src = ready || p.image;
+    return `<img src="${esc(src)}" alt="${decorative ? "" : esc(`${p.name} in ${color.name}`)}" loading="lazy" decoding="async" data-fallback="${esc(p.id)}" data-color="${esc(color.name)}"${ready ? ' data-trimmed="1"' : ""}>`;
   }
   return flatSVG(p, color, { annotate, label: `${p.name} in ${color.name}, illustration`, decorative, align });
 }

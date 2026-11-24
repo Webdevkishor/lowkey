@@ -75,10 +75,25 @@ colors: [
 
 Until a product has a photo, the site draws it: a technical drawing in the Index and drawer, and a 3D garment on the rail. To use a photo:
 
-1. Save it in `assets/products/`, e.g. `assets/products/LM-SH-01.jpg`.
-2. In that product, set `image: "assets/products/LM-SH-01.jpg"`.
+1. Save it in `assets/products/`, named with the product code, e.g. `assets/products/LM-SH-01.png`.
+2. In that product, set `image: "assets/products/LM-SH-01.png"`. The name must match exactly, capitals included (`.PNG` and `.png` are different files online).
+3. Publish (section 4). The Index, product drawer, Shop the Look and 3D rail all use the photo.
 
-Tips: shoot the garment on a hanger against a plain wall, in portrait. Save it about 1200 × 1440 px (5:6) as a JPG under ~200 KB (any "compress JPG" tool works). With a photo, the rail shows it on a softly curved hanging panel instead of the drawn garment.
+**Best look: a cut-out photo (background removed).**
+
+- Shoot the garment flat or on a hanger, front facing, in good light.
+- Remove the background with any background-remover tool (many phone gallery and editing apps have one).
+- Save as **PNG** (or WebP), keeping the transparency.
+- Leave out the hanger if you can: the site adds its own wooden one.
+- You don't need to crop: empty space around the garment is trimmed automatically.
+
+On the 3D rail, a cut-out hangs from the wooden hanger like the real garment, with a matching shadow. Its back shows a plain version in the garment's colour.
+
+**A normal photo (JPG) works too.** It appears as-is, and on the 3D rail it hangs as a picture panel.
+
+**Sizes:** about 1000–1400 px on the long side. Keep JPGs under ~200 KB and cut-out PNGs under ~500 KB, so phones load them quickly (squoosh.app compresses both).
+
+One photo per product: choosing another colour in the drawer doesn't swap the photo, but the WhatsApp message still includes the chosen colour.
 
 ### Shop the Look
 

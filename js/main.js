@@ -276,6 +276,7 @@ function initReveals() {
 async function boot() {
   ui.applyConfig(CONFIG);
   ui.initImageFallback(byId);
+  ui.initPhotoTrim();
   cursor = ui.initCursor(reduced);
   ui.initGrain(reduced);
   ui.initTape();
