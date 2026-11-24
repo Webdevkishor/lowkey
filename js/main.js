@@ -18,6 +18,11 @@ const byId = new Map(products.map((p) => [p.id, p]));
 const numberOf = (p) => products.indexOf(p) + 1;
 const categories = [...new Set(products.map((p) => p.category))];
 
+// Loading: show the page after this long (ms since it opened) even if 3D isn't ready,
+// and give up on 3D (use the 2D rail) if it still isn't ready after the second value.
+const LOADER_MAX_WAIT_MS = 5000;
+const THREE_D_TIMEOUT_MS = 25000;
+
 const stage = document.getElementById("stage");
 const fallbackRoot = document.getElementById("fallback-rail");
 const grid = document.getElementById("grid");
@@ -201,7 +206,44 @@ async function start3D(loader, isAborted) {
   return r;
 }
 
+/**
+ * Load the 3D rail in the background. Resolves with the rail controller, or
+ * null if it fails or takes longer than THREE_D_TIMEOUT_MS (the 2D rail is used then).
+ */
+function load3D(loader) {
+  let aborted = false;
+  let timer;
+  return Promise.race([
+    start3D(loader, () => aborted),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        aborted = true;
+        reject(new Error("3D took too long to load"));
+      }, THREE_D_TIMEOUT_MS);
+    }),
+  ])
+    .then((r) => (rail = r))
+    .catch((err) => {
+      console.warn("[LOWKEY] 3D rail unavailable, showing the 2D rail instead:", err?.message || err);
+      rail = null;
+      stage.replaceChildren();
+      return null;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
+/** Show the 3D rail: fade the canvas in and switch the spotlights on. */
+function revealRail(r) {
+  document.body.classList.remove("is-warming");
+  document.body.classList.add("rail-ready");
+  r.reveal();
+}
+
+let started2D = false;
 function start2D() {
+  if (started2D) return;
+  started2D = true;
+  document.body.classList.remove("is-warming");
   document.body.classList.add("no-3d");
   stage.hidden = true;
   ui.renderFallbackRail(fallbackRoot, products, { onOpen: openProduct });
@@ -266,31 +308,22 @@ async function boot() {
   });
   loader.set(30);
 
-  if (want3D()) {
-    let aborted = false;
-    let timer;
-    try {
-      rail = await Promise.race([
-        start3D(loader, () => aborted),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => {
-            aborted = true;
-            reject(new Error("3D took too long to load"));
-          }, 15000);
-        }),
-      ]);
-    } catch (err) {
-      console.warn("[LOWKEY] 3D rail unavailable, showing the 2D rail instead:", err?.message || err);
-      rail = null;
-      stage.replaceChildren();
-    } finally {
-      clearTimeout(timer);
-    }
+  // Wait for the 3D rail behind the loader, but never longer than
+  // LOADER_MAX_WAIT_MS after the page opened. On slow connections the page is
+  // shown first and the rail fades in and lights up when it arrives.
+  const threeD = want3D() ? load3D(loader) : null;
+  if (!threeD) {
+    start2D();
+  } else {
+    const SLOW = Symbol("slow");
+    const left = Math.max(0, LOADER_MAX_WAIT_MS - performance.now());
+    const first = await Promise.race([threeD, new Promise((r) => setTimeout(() => r(SLOW), left))]);
+    if (first === SLOW) document.body.classList.add("is-warming");
+    else if (!first) start2D();
   }
-  if (!rail) start2D();
 
   await loader.done();
-  rail?.reveal();
+  threeD?.then((r) => (r ? revealRail(r) : start2D()));
   handleHash();
   addEventListener("hashchange", handleHash);
 }

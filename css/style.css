@@ -1784,3 +1784,36 @@ html.reduced-motion .hint__line::after {
 .no-3d .fallback-rail {
   margin-top: 28px;
 }
+
+/* ---------- slow connections: page first, rail fades in when ready ---------- */
+.stage canvas {
+  opacity: 0;
+  transition: opacity 1.4s var(--ease);
+}
+.rail-ready .stage canvas {
+  opacity: 1;
+}
+.hero__warm {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  display: none;
+  align-items: center;
+  gap: 12px;
+  transform: translate(-50%, -50%);
+  font: 500 10px/1 var(--f-mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bone-dim);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.is-warming .hero__warm {
+  display: flex;
+}
+@media (min-width: 901px) {
+  .hero__warm {
+    left: 66%;
+  }
+}
