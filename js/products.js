@@ -233,7 +233,7 @@ export const PRODUCTS = [
     fit: "Regular",
     description:
       "Soft cotton with a bold front print. A regular fit that's easy to wear every day.",
-    image: "",
+    image: "assets/products/LM-AP-02-cutout.webp",
     garmentType: "graphic-tee",
   },
 ];
